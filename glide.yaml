@@ -1,0 +1,6 @@
+package: go-fdb-test
+import:
+- package: github.com/apple/foundationdb
+  version: =5.1.7
+  subpackages:
+  - bindings/go/src/fdb
