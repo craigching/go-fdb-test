@@ -1,8 +1,37 @@
-hash: b14a783702db880ece871c6577b9d8c29a2538a62f8f9b0b45609a4d720ec9f1
-updated: 2018-05-25T17:14:39.832042587-05:00
+hash: d958740c2e886e2fd6d7615703c5e6bd62d7c3a3169ba406fb567d1ad5241f3a
+updated: 2018-05-31T21:55:18.101616535-05:00
 imports:
 - name: github.com/apple/foundationdb
   version: 9ad8d02386d4a6a5efecf898df80f2747695c627
   subpackages:
   - bindings/go/src/fdb
+  - bindings/go/src/fdb/directory
+  - bindings/go/src/fdb/subspace
+  - bindings/go/src/fdb/tuple
+- name: github.com/bsm/sarama-cluster
+  version: cf455bc755fe41ac9bb2861e7a961833d9c2ecc3
+- name: github.com/davecgh/go-spew
+  version: 346938d642f2ec3594ed81d874461961cd0faa76
+  subpackages:
+  - spew
+- name: github.com/eapache/go-resiliency
+  version: ea41b0fad31007accc7f806884dcdf3da98b79ce
+  subpackages:
+  - breaker
+- name: github.com/eapache/go-xerial-snappy
+  version: bb955e01b9346ac19dc29eb16586c90ded99a98c
+- name: github.com/eapache/queue
+  version: 093482f3f8ce946c05bcba64badd2c82369e084d
+- name: github.com/golang/snappy
+  version: 2e65f85255dbc3072edf28d6b5b8efc472979f5a
+- name: github.com/pierrec/lz4
+  version: ed8d4cc3b461464e69798080a0092bd028910298
+- name: github.com/pierrec/xxHash
+  version: a0006b13c722f7f12368c00a3d3c2ae8a999a0c6
+  subpackages:
+  - xxHash32
+- name: github.com/rcrowley/go-metrics
+  version: e2704e165165ec55d062f5919b4b29494e9fa790
+- name: github.com/Shopify/sarama
+  version: 35324cf48e33d8260e1c7c18854465a904ade249
 testImports: []

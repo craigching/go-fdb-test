@@ -3,37 +3,117 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
+	"os"
+	"os/signal"
 	"strconv"
 	"time"
 
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
-	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
+	cluster "github.com/bsm/sarama-cluster"
 )
 
 func main() {
-	fdb.MustAPIVersion(510)
-	db := fdb.MustOpenDefault()
 
-	metricsDir, err := directory.CreateOrOpen(db, []string{"metrics"}, nil)
+	config := cluster.NewConfig()
+	config.Consumer.Return.Errors = true
+	config.Group.Return.Notifications = true
+
+	brokers := []string{"localhost:9092"}
+	group := "measures-1"
+	topics := []string{"measures"}
+	consumer, err := cluster.NewConsumer(brokers, group, topics, config)
+
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Couldn't create consumer group.", err)
 	}
 
-	measuresSS := metricsDir.Sub("measures")
+	defer consumer.Close()
 
-	tags := make(map[string]string)
-	fields := make(map[string]interface{})
+	// trap SIGINT to trigger a shutdown.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
 
-	StoreMeasurement(db, measuresSS, "cpu", tags, fields, time.Now())
+	// consume errors
+	go func() {
+		for err := range consumer.Errors() {
+			log.Printf("Error: %s\n", err.Error())
+		}
+	}()
 
-	now := time.Now()
-	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	to := from.AddDate(0, 0, 1)
+	// consume notifications
+	go func() {
+		for ntf := range consumer.Notifications() {
+			log.Printf("Rebalanced: %+v\n", ntf)
+		}
+	}()
 
-	QueryMeasurements(db, measuresSS, "cpu", from, to)
+	// consume messages, watch signals
+	for {
+		select {
+		case msg, ok := <-consumer.Messages():
+			if ok {
+				fmt.Fprintf(os.Stdout, "%s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value)
+				consumer.MarkOffset(msg, "") // mark message as processed
+				// parseValue(msg.Value)
+			}
+		case <-signals:
+			return
+		case <-time.After(7 * time.Second):
+			fmt.Println("")
+		}
+	}
+
+	// rand.Seed(time.Now().UTC().UnixNano())
+
+	// fdb.MustAPIVersion(510)
+	// db := fdb.MustOpenDefault()
+
+	// metricsDir, err := directory.CreateOrOpen(db, []string{"metrics"}, nil)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+
+	// measuresSS := metricsDir.Sub("measures")
+
+	// tags := make(map[string]string)
+
+	// tags["host"] = "hyperdawn"
+	// tags["cpu"] = "cpu0"
+
+	// fields := make(map[string]interface{})
+	// // n := randRange(1, 10000)
+	// value := rand.Float64() /* * float64(n) */
+
+	// StoreMeasurement(db, measuresSS, "cpu", tags, fields, time.Now(), value)
+
+	// now := time.Now()
+	// from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	// to := from.AddDate(0, 0, 1)
+
+	// QueryMeasurements(db, measuresSS, "cpu", from, to)
 }
+
+func randRange(min, max int) int {
+	return min + rand.Intn(max-min)
+}
+
+// func parseValue(v []byte) {
+// 	fmt.Println("=================")
+// 	str := string(v)
+// 	parts := strings.Fields(str)
+// 	for _, part := range parts {
+// 		fmt.Println(part)
+// 	}
+
+// 	p1 := strings.split(parts[0], ",")
+
+// 	measurement := p1[0]
+
+// 	fmt.Println("=================")
+// }
 
 // NewMeasurementKeyRange blah blah
 func NewMeasurementKeyRange(ss subspace.Subspace, measurement string, from, to time.Time) fdb.KeyRange {
@@ -64,6 +144,7 @@ func StoreMeasurement(
 	tags map[string]string,
 	fields map[string]interface{},
 	ts time.Time,
+	value float64,
 ) {
 	// cpu,cpu=cpu0,host=hyperdawn usage_system=0.5
 	// SELECT mean("usage_user") FROM "cpu" WHERE ("cpu" = 'cpu-total') AND time >= now() - 6h GROUP BY time(10s) fill(null)
@@ -78,7 +159,6 @@ func StoreMeasurement(
 
 	t.Transact(func(tr fdb.Transaction) (ret interface{}, err error) {
 
-		value := 12345.6
 		tr.Set(key, []byte(strconv.FormatFloat(value, 'f', -1, 64)))
 
 		return

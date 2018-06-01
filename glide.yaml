@@ -1,6 +1,12 @@
 package: go-fdb-test
 import:
 - package: github.com/apple/foundationdb
-  version: =5.1.7
+  version: ~5.1.7
   subpackages:
   - bindings/go/src/fdb
+- package: github.com/Shopify/sarama
+  version: ^1.17.0
+- package: github.com/bsm/sarama-cluster
+  version: ^2.1.13
+- package: github.com/davecgh/go-spew
+  version: ^1.1.0
