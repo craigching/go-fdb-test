@@ -1,11 +1,10 @@
-hash: d958740c2e886e2fd6d7615703c5e6bd62d7c3a3169ba406fb567d1ad5241f3a
-updated: 2018-05-31T21:55:18.101616535-05:00
+hash: 062c10682f4030536d317e3cd3d6b89745fd507fb24837c74ea39c99f5715861
+updated: 2018-06-01T08:32:22.25785149-05:00
 imports:
 - name: github.com/apple/foundationdb
   version: 9ad8d02386d4a6a5efecf898df80f2747695c627
   subpackages:
   - bindings/go/src/fdb
-  - bindings/go/src/fdb/directory
   - bindings/go/src/fdb/subspace
   - bindings/go/src/fdb/tuple
 - name: github.com/bsm/sarama-cluster
@@ -24,6 +23,8 @@ imports:
   version: 093482f3f8ce946c05bcba64badd2c82369e084d
 - name: github.com/golang/snappy
   version: 2e65f85255dbc3072edf28d6b5b8efc472979f5a
+- name: github.com/influxdata/influxdb
+  version: d1a4736a8422e5abb2a83639932f57f0d08fd87f
 - name: github.com/pierrec/lz4
   version: ed8d4cc3b461464e69798080a0092bd028910298
 - name: github.com/pierrec/xxHash

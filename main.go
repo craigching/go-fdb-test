@@ -1,18 +1,23 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"os"
 	"os/signal"
+	"reflect"
 	"strconv"
 	"time"
+	"strings"
 
+	"github.com/apple/foundationdb/bindings/go/src/fdb/directory"
 	"github.com/apple/foundationdb/bindings/go/src/fdb"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/subspace"
 	"github.com/apple/foundationdb/bindings/go/src/fdb/tuple"
 	cluster "github.com/bsm/sarama-cluster"
+	"github.com/influxdata/influxdb/models"
 )
 
 func main() {
@@ -50,6 +55,24 @@ func main() {
 		}
 	}()
 
+	fdb.MustAPIVersion(510)
+	db := fdb.MustOpenDefault()
+
+	metricsDir, err := directory.CreateOrOpen(db, []string{"metrics-20180601-1"}, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	measuresSS := metricsDir.Sub("measures")
+
+	now := time.Now()
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	to := from.AddDate(0, 0, 1)
+
+	// cpu,cpu=cpu0,host=8c8590ad83d9 usage_irq=0,usage_steal=0,usage_user=7.592407592407592,usage_system=5.694305694305695,usage_iowait=0,usage_guest=0,usage_guest_nice=0,usage_idle=86.7132867132867,usage_nice=0,usage_softirq=0
+
+	QueryMeasurements(db, measuresSS, "cpu", "cpu=cpu0,host=8c8590ad83d9", "usage_system", from, to)
+
 	// consume messages, watch signals
 	for {
 		select {
@@ -57,7 +80,7 @@ func main() {
 			if ok {
 				fmt.Fprintf(os.Stdout, "%s/%d/%d\t%s\t%s", msg.Topic, msg.Partition, msg.Offset, msg.Key, msg.Value)
 				consumer.MarkOffset(msg, "") // mark message as processed
-				// parseValue(msg.Value)
+				parseValue(db, measuresSS, msg.Value)
 			}
 		case <-signals:
 			return
@@ -68,15 +91,6 @@ func main() {
 
 	// rand.Seed(time.Now().UTC().UnixNano())
 
-	// fdb.MustAPIVersion(510)
-	// db := fdb.MustOpenDefault()
-
-	// metricsDir, err := directory.CreateOrOpen(db, []string{"metrics"}, nil)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// measuresSS := metricsDir.Sub("measures")
 
 	// tags := make(map[string]string)
 
@@ -88,35 +102,114 @@ func main() {
 	// value := rand.Float64() /* * float64(n) */
 
 	// StoreMeasurement(db, measuresSS, "cpu", tags, fields, time.Now(), value)
-
-	// now := time.Now()
-	// from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	// to := from.AddDate(0, 0, 1)
-
-	// QueryMeasurements(db, measuresSS, "cpu", from, to)
 }
 
 func randRange(min, max int) int {
 	return min + rand.Intn(max-min)
 }
 
-// func parseValue(v []byte) {
-// 	fmt.Println("=================")
-// 	str := string(v)
-// 	parts := strings.Fields(str)
-// 	for _, part := range parts {
-// 		fmt.Println(part)
-// 	}
+func parseValue(t fdb.Transactor, ss subspace.Subspace, v []byte) {
+	fmt.Println("=================")
 
-// 	p1 := strings.split(parts[0], ",")
+	points, err := models.ParsePoints(v)
 
-// 	measurement := p1[0]
+	if err != nil {
+		fmt.Println("ERROR:", err)
+	}
 
-// 	fmt.Println("=================")
-// }
+	for _, point := range points {
+		fmt.Printf("%+v\n", point.Tags())
+		fmt.Println("Tags type:", reflect.TypeOf(point.Tags()).String())
+		// fmt.Printf("%+v\n", point.Fields())
+		// fmt.Println("Fields type:", reflect.TypeOf(point.Fields()).String())
+
+		name := point.Name()
+
+		ts := point.UnixNano() / 1000000
+
+		fmt.Println("Time:", point.Time())
+
+		entries := make([]string, 0)
+		// entries = append(entries, string(name))
+		for _, tag := range point.Tags() {
+			entry := fmt.Sprintf("%s=%s", tag.Key, tag.Value)
+			entries = append(entries, entry)
+		}
+
+		tagsKey := strings.Join(entries, ",")
+
+		fmt.Println("tagsKey:", tagsKey)
+
+		fi := point.FieldIterator()
+		for fi.Next() {
+			fieldName := string(fi.FieldKey())
+
+			// ([measurement, tagsString, field name, timestamp], value)
+
+			fmt.Printf("%s %s %s %d\n", name, tagsKey, fieldName, ts)
+		
+			key := ss.Pack(tuple.Tuple{name, tagsKey, fieldName, ts})
+			tv, err := getValue(fi)
+
+			fmt.Println("tv:", tv)
+
+			if err != nil {
+				fmt.Println("ERROR:", err)
+			}
+
+			value := ss.Pack(tv)
+			
+			fmt.Println("key:", key)
+			fmt.Println("value:", value)
+
+			ret, err := t.Transact(func(tr fdb.Transaction) (ret interface{}, err error) {
+
+				tr.Set(key, value)
+
+				return
+			})
+
+			if err != nil {
+				fmt.Println("ERROR inserting data:", err)
+			}
+
+			fmt.Println("ret:", ret)
+		}
+	}
+
+	fmt.Println("=================")
+}
+
+func getValue(fi models.FieldIterator) (tuple.Tuple, error) {
+	switch fi.Type() {
+	case models.Integer:
+		value, _ := fi.IntegerValue()
+		fmt.Printf("%d\n", value)
+		return tuple.Tuple{int64(models.Integer), value}, nil
+	case models.Float:
+		value, _ := fi.FloatValue()
+		// fmt.Printf("%s=%f\n", fieldName, value)
+		return tuple.Tuple{int64(models.Float), value}, nil
+	case models.Boolean:
+		value, _ := fi.BooleanValue()
+		// fmt.Printf("%s=%b\n", fieldName, value)
+		return tuple.Tuple{int64(models.Boolean), value}, nil
+	case models.String:
+		value := fi.StringValue()
+		// fmt.Printf("%s=%s\n", fieldName, value)
+		return tuple.Tuple{int64(models.String), value}, nil
+	}
+
+	return tuple.Tuple{}, errors.New("Invalid data type")
+}
 
 // NewMeasurementKeyRange blah blah
-func NewMeasurementKeyRange(ss subspace.Subspace, measurement string, from, to time.Time) fdb.KeyRange {
+func NewMeasurementKeyRange(
+	ss subspace.Subspace,
+	measurement string,
+	tagStr string,
+	fieldName string,
+	from, to time.Time) fdb.KeyRange {
 
 	fmt.Println("From:", from)
 	fmt.Println("To:  ", to)
@@ -127,8 +220,8 @@ func NewMeasurementKeyRange(ss subspace.Subspace, measurement string, from, to t
 	fmt.Println("fromMs:", fromMs)
 	fmt.Println("toMs:  ", toMs)
 
-	fromKey := ss.Pack(tuple.Tuple{measurement, fromMs})
-	toKey := ss.Pack(tuple.Tuple{measurement, toMs})
+	fromKey := ss.Pack(tuple.Tuple{measurement, tagStr, fieldName, fromMs})
+	toKey := ss.Pack(tuple.Tuple{measurement, tagStr, fieldName, toMs})
 
 	fmt.Println("fromKey:", fromKey)
 	fmt.Println("toKey:  ", toKey)
@@ -167,9 +260,15 @@ func StoreMeasurement(
 }
 
 // QueryMeasurements blah blah
-func QueryMeasurements(t fdb.Transactor, ss subspace.Subspace, measurement string, from, to time.Time) (ac []string, err error) {
+func QueryMeasurements(
+	t fdb.Transactor,
+	ss subspace.Subspace,
+	measurement string,
+	tagString string,
+	fieldName string,
+	from, to time.Time) (ac []string, err error) {
 
-	keyRange := NewMeasurementKeyRange(ss, measurement, from, to)
+	keyRange := NewMeasurementKeyRange(ss, measurement, tagString, fieldName, from, to)
 
 	t.ReadTransact(func(rtr fdb.ReadTransaction) (interface{}, error) {
 
@@ -182,14 +281,12 @@ func QueryMeasurements(t fdb.Transactor, ss subspace.Subspace, measurement strin
 				fmt.Println("Error:", err)
 				return nil, err
 			}
-			if v > 0 {
-				t, err := ss.Unpack(kv.Key)
-				if err != nil {
-					return nil, err
-				}
-				fmt.Println("key:", t)
-				fmt.Println("val:", v)
+			t, err := ss.Unpack(kv.Key)
+			if err != nil {
+				return nil, err
 			}
+			fmt.Println("key:", t)
+			fmt.Println("val:", v)
 		}
 		return nil, nil
 	})
